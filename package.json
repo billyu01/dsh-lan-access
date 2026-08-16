@@ -1,0 +1,39 @@
+{
+  "name": "dsh-lan-access",
+  "version": "0.1.0",
+  "description": "Access your DeepSeek Harness from your phone over LAN or Tailscale — built-in reverse proxy with per-address toggle switches.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/index.js",
+    "src/client.js",
+    "src/proxy-server.cjs",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "cordis",
+    "plugin",
+    "lan-access",
+    "tailscale",
+    "remote-access",
+    "reverse-proxy"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "scripts": {
+    "release": "bash scripts/release.sh"
+  }
+}

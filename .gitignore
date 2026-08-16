@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+*.log
+
+# Build output
+dist/
+lib/
+*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Env & secrets
+.env
+.env.*
+*.pem
+*.key

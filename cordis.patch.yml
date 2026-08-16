@@ -1,0 +1,24 @@
+# Example patch that mounts dsh-lan-access into a host composition.
+#
+# This file documents how a deployment composes the plugin. A host-side
+# `cordis.patch.yml` (the same mechanism `dsh-web-app` uses) adds these rows:
+#
+#   - id: lan-access
+#     name: dsh-lan-access
+#
+# The browser half is a `dsh.client` row. A real deployment would list it
+# alongside the shipped client rows so `client-modules` scans it into
+# `window.__DSH_BOOT__`:
+#
+#   - id: lan-access-client
+#     name: dsh-lan-access/client
+#     inject: ['@deepseek-ai/dsh-client-ui-settings']
+#
+# The plugin needs these host services, all present in a stock web profile:
+#   - webServer   (index.html polyfill + the /lan control routes)
+#   - subprocess  (spawns the per-address reverse proxy)
+#   - shell       (detects local IPv4 addresses)
+# The browser half needs the `slots` service (shipped by dsh-client-ui-slots).
+
+- id: lan-access
+  name: dsh-lan-access
