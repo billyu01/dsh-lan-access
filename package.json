@@ -7,7 +7,7 @@
   "main": "src/index.js",
   "exports": {
     ".": "./src/index.js",
-    "./client": "./src/client.js",
+    "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -15,11 +15,17 @@
     "src/index.js",
     "src/client.js",
     "src/proxy-server.cjs",
+    "lib/client.js",
     "cordis.patch.yml",
     "README.md",
     "README.zh.md",
     "LICENSE"
   ],
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
   "keywords": [
     "deepseek-harness",
     "dsh",

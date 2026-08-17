@@ -2,9 +2,10 @@
 node_modules/
 *.log
 
-# Build output
+# Build output (lib/client.js is a hand-authored bundle and is tracked)
 dist/
-lib/
+lib/*
+!lib/client.js
 *.tsbuildinfo
 
 # OS / editor

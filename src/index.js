@@ -19,7 +19,11 @@
 import { fileURLToPath } from 'node:url'
 
 export const name = 'lan-access'
-export const inject = []
+// The host half reads these services with ctx.get(); declaring them as
+// injects guarantees cordis activates this plugin only after they are all
+// provided (otherwise an empty-inject plugin can run before webServer and
+// silently skip route registration).
+export const inject = ['webServer', 'subprocess', 'shell']
 
 const PROXY_PORT = 3082
 const PROXY_SCRIPT = fileURLToPath(new URL('./proxy-server.cjs', import.meta.url))
@@ -36,9 +40,17 @@ function polyfillScript() {
     'var h=[];for(var i=0;i<16;i++){h.push((b[i]<16?"0":"")+b[i].toString(16));}',
     'return h[0]+h[1]+h[2]+h[3]+"-"+h[4]+h[5]+"-"+h[6]+h[7]+"-"+h[8]+h[9]+"-"+h[10]+h[11]+h[12]+h[13]+h[14]+h[15];',
     '};',
-    'try{crypto.randomUUID=make;}catch(e){',
-    'try{Object.defineProperty(crypto,"randomUUID",{value:make,configurable:true,writable:true});}catch(e2){}',
-    '}',
+    // defineProperty on the instance first: it writes an OWN property that
+    // shadows a getter-only `randomUUID` accessor on Crypto.prototype (how
+    // browsers expose the [SecureContext] member in non-secure contexts). A
+    // plain assignment to a getter-only accessor fails SILENTLY in sloppy
+    // mode, so we re-check `typeof` after each attempt and escalate:
+    //   1. defineProperty on the instance (Chrome: extensible crypto)
+    //   2. plain assignment (older engines without a blocking accessor)
+    //   3. defineProperty on Crypto.prototype (Safari: non-extensible crypto)
+    'try{Object.defineProperty(crypto,"randomUUID",{value:make,configurable:true,writable:true});}catch(e){}',
+    'if(typeof crypto.randomUUID!=="function"){try{crypto.randomUUID=make;}catch(e){}}',
+    'if(typeof crypto.randomUUID!=="function"){try{Object.defineProperty(crypto.constructor.prototype,"randomUUID",{value:make,configurable:true,writable:true});}catch(e){}}',
     '}',
     '}catch(e){}',
     '})();',

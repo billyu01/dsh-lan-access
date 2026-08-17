@@ -19,6 +19,7 @@
 
 const http = require('node:http');
 const net = require('node:net');
+const zlib = require('node:zlib');
 
 const PORT = Number(process.env.LAN_PROXY_PORT || 3082);
 const BIND = process.env.LAN_PROXY_BIND || '0.0.0.0';
@@ -33,15 +34,27 @@ const HOP_BY_HOP = new Set([
   'te', 'trailer', 'transfer-encoding', 'upgrade', 'content-length', 'host',
 ]);
 
+// Reuse upstream connections (proxy -> loopback DSH). The original proxy
+// forced `connection: close` on every request, so a phone had to open a fresh
+// TCP connection per plugin bundle — dozens of handshakes over Tailscale/Wi-Fi
+// that intermittently timed out as "bundle script ... failed to load".
+const upstreamAgent = new http.Agent({ keepAlive: true, maxSockets: 64 });
+
 function forwardHttp(req, res) {
   const headers = {};
+  const hasBody = (req.headers['content-length'] !== undefined && req.headers['content-length'] !== '0')
+    || req.headers['transfer-encoding'] !== undefined;
   for (const k of Object.keys(req.headers)) {
     if (HOP_BY_HOP.has(k)) continue;
     const v = req.headers[k];
     if (v !== undefined) headers[k] = v;
   }
   headers.host = AUTH;
-  headers.connection = 'close';
+  // Bodyless requests (the bundle fetches) keep the connection alive so the
+  // phone reuses one connection across dozens of bundles. Requests with a body
+  // still close to delimit it (content-length / transfer-encoding are
+  // hop-by-hop and are not re-framed here).
+  if (hasBody) headers.connection = 'close';
   if (req.headers.origin !== undefined) headers.origin = 'http://' + AUTH;
 
   const upstream = http.request({
@@ -50,9 +63,40 @@ function forwardHttp(req, res) {
     method: req.method,
     path: req.url,
     headers,
+    agent: upstreamAgent,
   }, (upstreamRes) => {
-    res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
-    upstreamRes.pipe(res);
+    const status = upstreamRes.statusCode || 502;
+    const contentType = String(upstreamRes.headers['content-type'] || '');
+    const compressible = /(^text\/|application\/(json|javascript|x-javascript|xml)|image\/svg\+xml|application\/manifest\+json)/i.test(contentType);
+    const wantsGzip = /gzip/i.test(String(req.headers['accept-encoding'] || ''));
+    const alreadyEncoded = upstreamRes.headers['content-encoding'] !== undefined;
+
+    // Re-compress shell assets / bundles / html before they cross the phone's
+    // network: the upstream serves them uncompressed (1.2MB+ of JS/CSS), which
+    // intermittently stalls out on 5G/Tailscale. Gzip cuts that ~4x.
+    if (status === 200 && compressible && wantsGzip && !alreadyEncoded) {
+      const resHeaders = {};
+      for (const k of Object.keys(upstreamRes.headers)) {
+        if (k === 'connection' || k === 'keep-alive' || k === 'content-length' || k === 'transfer-encoding' || k === 'content-encoding') continue;
+        const v = upstreamRes.headers[k];
+        if (v !== undefined) resHeaders[k] = v;
+      }
+      resHeaders['content-encoding'] = 'gzip';
+      resHeaders['vary'] = 'Accept-Encoding';
+      res.writeHead(status, resHeaders);
+      const gz = zlib.createGzip({ level: 6 });
+      gz.on('error', () => { try { res.destroy(); } catch (e) {} });
+      upstreamRes.pipe(gz).pipe(res);
+    } else {
+      const resHeaders = {};
+      for (const k of Object.keys(upstreamRes.headers)) {
+        if (k === 'connection' || k === 'keep-alive') continue;
+        const v = upstreamRes.headers[k];
+        if (v !== undefined) resHeaders[k] = v;
+      }
+      res.writeHead(status, resHeaders);
+      upstreamRes.pipe(res);
+    }
   });
   upstream.on('error', () => {
     if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain' });
