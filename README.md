@@ -39,6 +39,37 @@ This plugin fixes both, inside a "Mobile Access" settings page:
 
 Keep switches off when you don't need remote access.
 
+## Android app
+
+Besides opening `http://<that-address>:3082/` in a mobile browser, you can use
+the prebuilt Android app (`dsh-access`).
+
+### Download
+
+Download the latest `dsh-access.apk` from [Releases](../../releases).
+
+### Install
+
+The APK is not on an app store — sideload it:
+
+1. Download `dsh-access.apk` to your phone.
+2. Open it and allow "unknown sources" when Android prompts.
+3. If an older version is installed, uninstall it first — builds are signed
+   differently, so installing over the old one fails with
+   `INSTALL_FAILED_UPDATE_INCOMPATIBLE`.
+
+### Usage
+
+1. Open **dsh-access**.
+2. Enter the access address (e.g. `http://192.168.1.10:3082`) and tap
+   **进入 (Enter)**.
+3. Saved addresses are listed with their reachability status; tap one to open
+   it again.
+
+> The app pairs with the plugin: enable an address switch under
+> **Settings → 手机访问 / Mobile Access**, then enter that address (port `3082`)
+> in the app.
+
 ## How it works
 
 ```
