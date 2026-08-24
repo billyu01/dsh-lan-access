@@ -62,12 +62,12 @@ The APK is not on an app store — sideload it:
 
 1. Open **dsh-access**.
 2. Enter the access address (e.g. `http://192.168.1.10:3082`) and tap
-   **进入 (Enter)**.
+   **Enter**.
 3. Saved addresses are listed with their reachability status; tap one to open
    it again.
 
 > The app pairs with the plugin: enable an address switch under
-> **Settings → 手机访问 / Mobile Access**, then enter that address (port `3082`)
+> **Settings → Mobile Access**, then enter that address (port `3082`)
 > in the app.
 
 ## How it works
