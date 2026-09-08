@@ -61,8 +61,9 @@ The APK is not on an app store — sideload it:
 ### Usage
 
 1. Open **dsh-access**.
-2. Enter the access address (e.g. `http://192.168.1.10:3082`) and tap
-   **Enter**.
+2. Enter the access address with its token (e.g.
+   `http://192.168.1.10:3082/?token=<token>`, where `<token>` is printed by
+   `dsh web` on startup) and tap **Enter**.
 3. Saved addresses are listed with their reachability status; tap one to open
    it again.
 
