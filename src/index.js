@@ -119,6 +119,15 @@ export function apply(ctx) {
   const startProxy = async (ip) => {
     if (handles.has(ip)) return
     const nodePath = await getNode()
+    // 从 connection 服务提取本次进程的 launch token，交给代理子进程自行完成
+    // 认证握手，这样 3082 端口上的访问者无需再手动携带 token。
+    let token = ''
+    const connection = ctx.get('connection')
+    if (connection && typeof connection.authenticatedUrl === 'function') {
+      try {
+        token = new URL(connection.authenticatedUrl('http://127.0.0.1:3080')).searchParams.get('token') || ''
+      } catch (e) { /* connection 不可用时降级为无 token */ }
+    }
     const handle = subprocess.spawn({
       argv: [nodePath, PROXY_SCRIPT],
       cwd: '/',
@@ -127,6 +136,7 @@ export function apply(ctx) {
       env: {
         LAN_PROXY_PORT: String(PROXY_PORT),
         LAN_PROXY_BIND: ip,
+        LAN_PROXY_TOKEN: token,
       },
     })
     handles.set(ip, handle)
