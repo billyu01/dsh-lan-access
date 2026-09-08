@@ -46,7 +46,7 @@ the prebuilt Android app (`dsh-access`).
 
 ### Download
 
-Download the latest `dsh-access.apk` from [Releases](../../releases).
+Download the latest `dsh-access.apk` from the [dsh-app Releases](https://github.com/billyu01/dsh-app/releases). Source: [billyu01/dsh-app](https://github.com/billyu01/dsh-app).
 
 ### Install
 

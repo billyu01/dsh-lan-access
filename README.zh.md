@@ -31,7 +31,7 @@ DeepSeek Harness 的 Web 界面默认只接受来自 `localhost` 的 `/api` 请�
 
 ### 下载
 
-在 [Releases](../../releases) 页面下载最新的 `dsh-access.apk`。
+在 [dsh-app 的 Releases](https://github.com/billyu01/dsh-app/releases) 页面下载最新的 `dsh-access.apk`。应用源码见 [billyu01/dsh-app](https://github.com/billyu01/dsh-app)。
 
 ### 安装
 
