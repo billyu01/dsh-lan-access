@@ -30,8 +30,13 @@ This plugin fixes both, inside a "Mobile Access" settings page:
 
 ## Usage
 
-1. Install and mount the plugin in a DSH web composition (see
-   `cordis.patch.yml`).
+1. Install the plugin into a DSH web profile. It ships as a profile bundle
+   (`dsh.bundle.patch`), so the plugin manager adds it to
+   `dsh.profile.bundles` and the bundle patch mounts both halves by itself:
+   install it from the Plugins page, or run
+   `dsh plugin --profile <name> add dsh-lan-access`. To compose it by hand
+   instead, copy the `insert` list from `cordis.patch.yml` into the profile's
+   own `cordis.patch.yml`.
 2. Open **Settings → 手机访问 / Mobile Access**.
 3. Flip the switch for the address you want (e.g. your Tailscale `100.x`
    address or the Wi-Fi `192.168.x.x`).

@@ -18,7 +18,7 @@ DeepSeek Harness 的 Web 界面默认只接受来自 `localhost` 的 `/api` 请�
 
 ## 使用手册
 
-1. 将插件安装并挂载到 DSH 的 Web 组合中（见 `cordis.patch.yml`）。
+1. 将插件安装到某个 DSH Web profile。它现在是一个 profile 组合包（`dsh.bundle.patch`），插件管理器会把它写入 `dsh.profile.bundles`，组合包 patch 会自行挂载前后两半：在「插件」页面安装，或执行 `dsh plugin --profile <name> add dsh-lan-access`。手动组合时，把 `cordis.patch.yml` 里的 `insert` 列表复制到 profile 自己的 `cordis.patch.yml` 即可。
 2. 打开 **设置 → 手机访问**。
 3. 打开你想要的地址对应的开关（例如 Tailscale 的 `100.x` 地址，或 Wi-Fi 的 `192.168.x.x`）。
 4. 在手机上打开 `http://<该地址>:3082/`。

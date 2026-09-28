@@ -1,24 +1,27 @@
-# Example patch that mounts dsh-lan-access into a host composition.
+# The dsh-lan-access bundle patch (declared by `dsh.bundle.patch` in
+# package.json). A profile layer is applied over the composition built by the
+# earlier layers, so mounting a new row means `insert` — an id-targeted patch
+# can only override a row that already exists, and an unknown id is skipped
+# with a warning.
 #
-# This file documents how a deployment composes the plugin. A host-side
-# `cordis.patch.yml` (the same mechanism `dsh-web-app` uses) adds these rows:
+# A deployment composing the plugin by hand adds the same insert to its own
+# profile `cordis.patch.yml` (or any later patch layer):
 #
-#   - id: lan-access
-#     name: dsh-lan-access
+#   - insert:
+#       - id: lan-access
+#         name: dsh-lan-access
 #
-# The browser half is a `dsh.client` row. A real deployment would list it
-# alongside the shipped client rows so `client-modules` scans it into
-# `window.__DSH_BOOT__`:
+# One row is enough for both halves: the `client-modules` node half scans host
+# rows whose package declares `dsh.client` and serves `exports["./client"]`
+# (the `dsh-lan-access/lib/client.js` browser bundle), so no separate client
+# row is listed.
 #
-#   - id: lan-access-client
-#     name: dsh-lan-access/client
-#     inject: ['@deepseek-ai/dsh-client-ui-settings']
-#
-# The plugin needs these host services, all present in a stock web profile:
+# The host half reads these services, all present in a stock web profile:
 #   - webServer   (index.html polyfill + the /lan control routes)
 #   - subprocess  (spawns the per-address reverse proxy)
 #   - shell       (detects local IPv4 addresses)
-# The browser half needs the `slots` service (shipped by dsh-client-ui-slots).
+# The browser half injects the `slots` service (shipped by dsh-client-ui-slots).
 
-- id: lan-access
-  name: dsh-lan-access
+- insert:
+    - id: lan-access
+      name: dsh-lan-access
