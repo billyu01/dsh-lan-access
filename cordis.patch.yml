@@ -19,7 +19,7 @@
 # The host half reads these services, all present in a stock web profile:
 #   - webServer   (index.html polyfill + the /lan control routes)
 #   - subprocess  (spawns the per-address reverse proxy)
-#   - shell       (detects local IPv4 addresses)
+# Local addresses come from node:os, so no shell executor is required.
 # The browser half injects the `slots` service (shipped by dsh-client-ui-slots).
 
 - insert:

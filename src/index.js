@@ -14,8 +14,11 @@
  * Consumes these host services (all optional, read with ctx.get):
  *   - webServer   (index.html tap + the two control routes)
  *   - subprocess  (spawns the proxy processes)
- *   - shell       (detects local IPv4 addresses)
+ * Local addresses come from node:os, so no shell executor is required and no
+ * `ctx.shell` call can drift from the seam across DSH releases (the
+ * foreground call was `run(spec)` in 0.1.5 and `execute(spec)` in 0.1.7).
  */
+import { networkInterfaces } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 export const name = 'lan-access'
@@ -23,7 +26,7 @@ export const name = 'lan-access'
 // injects guarantees cordis activates this plugin only after they are all
 // provided (otherwise an empty-inject plugin can run before webServer and
 // silently skip route registration).
-export const inject = ['webServer', 'subprocess', 'shell']
+export const inject = ['webServer', 'subprocess']
 
 const PROXY_PORT = 3082
 const PROXY_SCRIPT = fileURLToPath(new URL('./proxy-server.cjs', import.meta.url))
@@ -93,7 +96,6 @@ async function readBody(req) {
 export function apply(ctx) {
   const webServer = ctx.get('webServer')
   const subprocess = ctx.get('subprocess')
-  const shell = ctx.get('shell')
 
   // 1. crypto.randomUUID polyfill into index.html.
   if (webServer !== undefined) {
@@ -150,12 +152,22 @@ export function apply(ctx) {
   }
 
   // 2. Detect local IPv4 addresses once per request (cheap; lets the UI refresh).
+  //    node:os is the single source of truth: no ifconfig/ip parsing, no shell
+  //    seam dependency, and the same answer on every platform Node supports.
   const listAddresses = async () => {
-    const cmd = "(ifconfig 2>/dev/null || ip -4 addr show 2>/dev/null) | awk '/inet / && $2 !~ /^127\\./ {gsub(/addr:/,\"\",$2); sub(/\\/.*/,\"\",$2); print $2}' | sort -u"
-    const spec = shell.resolve({ command: cmd, timeoutMs: 6000 })
-    const result = await shell.run(spec)
-    const text = (result && result.stdout && result.stdout.text) ? result.stdout.text : ''
-    const ips = text.split('\n').map((s) => s.trim()).filter((s) => s.length > 0)
+    const ips = []
+    const seen = new Set()
+    for (const entries of Object.values(networkInterfaces())) {
+      for (const entry of entries || []) {
+        const family = typeof entry.family === 'string' ? entry.family : (entry.family === 4 ? 'IPv4' : String(entry.family))
+        if (family !== 'IPv4') continue
+        if (entry.internal) continue
+        if (typeof entry.address !== 'string' || entry.address.startsWith('127.')) continue
+        if (seen.has(entry.address)) continue
+        seen.add(entry.address)
+        ips.push(entry.address)
+      }
+    }
     return ips.map((ip) => ({ ip, private: isPrivate(ip), enabled: handles.has(ip) }))
   }
 
@@ -165,7 +177,6 @@ export function apply(ctx) {
       kind: 'exact',
       path: '/lan/info',
       handler: async (req, res) => {
-        if (shell === undefined) return json(res, 200, { ok: true, items: [], port: PROXY_PORT })
         try {
           const items = await listAddresses()
           items.sort((a, b) => (a.private !== b.private) ? (a.private ? -1 : 1) : (a.ip < b.ip ? -1 : 1))
