@@ -11,14 +11,22 @@
  *      proxy-server.cjs), which rewrites Host/Origin to loopback so DSH's
  *      /api browser-trust fence accepts the request.
  *
+ * The upstream authority is read from the live `webServer` service, never
+ * hardcoded: `dsh web` defaults to 3080, `--port` moves it, and the Desktop
+ * client pins 19387. A stale upstream is fatal — the proxy sits in its
+ * handshake retry loop and never binds, so the toggle would claim "on" while
+ * the phone's port stays dead.
+ *
  * Consumes these host services (all optional, read with ctx.get):
- *   - webServer   (index.html tap + the two control routes)
+ *   - webServer   (index.html tap + the two control routes + the live port)
  *   - subprocess  (spawns the proxy processes)
+ *   - connection  (launch token for the proxy's upstream handshake)
  * Local addresses come from node:os, so no shell executor is required and no
  * `ctx.shell` call can drift from the seam across DSH releases (the
  * foreground call was `run(spec)` in 0.1.5 and `execute(spec)` in 0.1.7).
  */
 import { networkInterfaces } from 'node:os'
+import net from 'node:net'
 import { fileURLToPath } from 'node:url'
 
 export const name = 'lan-access'
@@ -30,6 +38,61 @@ export const inject = ['webServer', 'subprocess']
 
 const PROXY_PORT = 3082
 const PROXY_SCRIPT = fileURLToPath(new URL('./proxy-server.cjs', import.meta.url))
+/** Used only when the service is not readable yet; the live port wins. */
+const FALLBACK_UPSTREAM_PORT = 3080
+/** How long /lan/set waits for the freshly spawned proxy to accept connections. */
+const READY_TIMEOUT_MS = 3000
+const READY_POLL_MS = 60
+const READY_CONNECT_TIMEOUT_MS = 400
+
+/**
+ * The authority the proxy must forward to. `webServer.host` is a bind literal
+ * (`127.0.0.1` or `0.0.0.0`), so connecting over loopback is always right.
+ * @param ctx - the owning plugin context.
+ * @returns the loopback host and the live listening port.
+ */
+function upstreamAuthority(ctx) {
+  const webServer = ctx.get('webServer')
+  const port = webServer === undefined ? NaN : Number(webServer.port)
+  return {
+    host: '127.0.0.1',
+    port: Number.isInteger(port) && port > 0 && port <= 65535 ? port : FALLBACK_UPSTREAM_PORT,
+  }
+}
+
+/** One TCP connect attempt against the proxy's listen address. */
+function canConnect(host, port) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host, port })
+    const settle = (value) => {
+      socket.removeAllListeners()
+      socket.destroy()
+      resolve(value)
+    }
+    socket.setTimeout(READY_CONNECT_TIMEOUT_MS)
+    socket.once('connect', () => settle(true))
+    socket.once('error', () => settle(false))
+    socket.once('timeout', () => settle(false))
+  })
+}
+
+/**
+ * Wait until something accepts TCP connections at host:port. This is the only
+ * trustworthy "remote access is actually up" signal: the process may be alive
+ * while still failing to bind.
+ * @param host - the address the proxy was told to bind.
+ * @param port - the port the proxy was told to bind.
+ * @param timeoutMs - how long to keep polling.
+ * @returns true once a connect succeeds before the deadline.
+ */
+async function waitForListen(host, port, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (await canConnect(host, port)) return true
+    if (Date.now() >= deadline) return false
+    await new Promise((resolve) => setTimeout(resolve, READY_POLL_MS))
+  }
+}
 
 /** Build the crypto.randomUUID polyfill <script> tag. */
 function polyfillScript() {
@@ -102,8 +165,10 @@ export function apply(ctx) {
     ctx.effect(() => webServer.tapIndex(injectPolyfill), 'lan-access: randomUUID polyfill')
   }
 
-  // Per-address proxy process handles: ip -> subprocess handle.
-  const handles = new Map()
+  // Per-address proxy entries: ip -> { handle, state, error }. `state` becomes
+  // 'running' only after the child is observed listening, so the UI never
+  // claims remote access that is not reachable.
+  const entries = new Map()
   let nodePathPromise = null
   const getNode = () => {
     if (nodePathPromise === null) nodePathPromise = subprocess.resolveExecutable('node')
@@ -111,43 +176,77 @@ export function apply(ctx) {
   }
 
   const stopProxy = (ip) => {
-    const h = handles.get(ip)
-    if (h !== undefined) {
-      try { h.terminate() } catch (e) { /* already gone */ }
-      handles.delete(ip)
+    const entry = entries.get(ip)
+    if (entry === undefined) return
+    entries.delete(ip)
+    try { entry.handle.terminate() } catch (e) { /* already gone */ }
+  }
+
+  const isRunning = (ip) => {
+    const entry = entries.get(ip)
+    return entry !== undefined && entry.state === 'running'
+  }
+
+  /** The launch token the proxy hands to the upstream during its handshake. */
+  const launchTokenFor = (authority) => {
+    const connection = ctx.get('connection')
+    if (!connection || typeof connection.authenticatedUrl !== 'function') return ''
+    try {
+      const url = new URL(connection.authenticatedUrl('http://' + authority.host + ':' + authority.port))
+      return url.searchParams.get('token') || ''
+    } catch (e) {
+      // A missing connection service degrades to an unauthenticated proxy;
+      // the upstream then answers 401 rather than the process failing to bind.
+      return ''
     }
   }
 
   const startProxy = async (ip) => {
-    if (handles.has(ip)) return
+    if (isRunning(ip)) return { ok: true }
+    if (entries.has(ip)) stopProxy(ip)
     const nodePath = await getNode()
-    // 从 connection 服务提取本次进程的 launch token，交给代理子进程自行完成
-    // 认证握手，这样 3082 端口上的访问者无需再手动携带 token。
-    let token = ''
-    const connection = ctx.get('connection')
-    if (connection && typeof connection.authenticatedUrl === 'function') {
-      try {
-        token = new URL(connection.authenticatedUrl('http://127.0.0.1:3080')).searchParams.get('token') || ''
-      } catch (e) { /* connection 不可用时降级为无 token */ }
+    // The upstream authority comes from the live web server: the Desktop client
+    // pins its own port, and a wrong one leaves the proxy retrying forever.
+    const authority = upstreamAuthority(ctx)
+    const entry = { handle: undefined, state: 'starting', error: '' }
+    entries.set(ip, entry)
+    try {
+      entry.handle = subprocess.spawn({
+        argv: [nodePath, PROXY_SCRIPT],
+        cwd: '/',
+        stdio: { stdin: 'ignore', stdout: { maxBytes: 65536 }, stderr: { maxBytes: 65536 } },
+        graceMs: 3000,
+        env: {
+          LAN_PROXY_PORT: String(PROXY_PORT),
+          LAN_PROXY_BIND: ip,
+          LAN_PROXY_UPSTREAM_HOST: authority.host,
+          LAN_PROXY_UPSTREAM_PORT: String(authority.port),
+          LAN_PROXY_TOKEN: launchTokenFor(authority),
+        },
+      })
+    } catch (err) {
+      entries.delete(ip)
+      throw err
     }
-    const handle = subprocess.spawn({
-      argv: [nodePath, PROXY_SCRIPT],
-      cwd: '/',
-      stdio: { stdin: 'ignore', stdout: { maxBytes: 65536 }, stderr: { maxBytes: 65536 } },
-      graceMs: 3000,
-      env: {
-        LAN_PROXY_PORT: String(PROXY_PORT),
-        LAN_PROXY_BIND: ip,
-        LAN_PROXY_TOKEN: token,
-      },
-    })
-    handles.set(ip, handle)
+    // A child that dies must not linger as "enabled".
+    const handle = entry.handle
+    if (handle !== undefined && handle.done !== undefined && typeof handle.done.then === 'function') {
+      const forget = () => { if (entries.get(ip) === entry) entries.delete(ip) }
+      handle.done.then(forget, forget)
+    }
+    if (!(await waitForListen(ip, PROXY_PORT, READY_TIMEOUT_MS))) {
+      entry.error = '代理未能在 ' + ip + ':' + PROXY_PORT + ' 上监听（上游 ' + authority.host + ':' + authority.port + '）'
+      stopProxy(ip)
+      return { ok: false, error: entry.error }
+    }
+    entry.state = 'running'
+    return { ok: true }
   }
 
   if (subprocess !== undefined) {
     ctx.effect(() => () => {
-      for (const h of handles.values()) { try { h.terminate() } catch (e) { /* noop */ } }
-      handles.clear()
+      for (const entry of entries.values()) { try { entry.handle.terminate() } catch (e) { /* noop */ } }
+      entries.clear()
     }, 'lan-access: proxy teardown')
   }
 
@@ -168,7 +267,15 @@ export function apply(ctx) {
         ips.push(entry.address)
       }
     }
-    return ips.map((ip) => ({ ip, private: isPrivate(ip), enabled: handles.has(ip) }))
+    return ips.map((ip) => {
+      const entry = entries.get(ip)
+      return {
+        ip,
+        private: isPrivate(ip),
+        enabled: entry !== undefined && entry.state === 'running',
+        error: entry === undefined ? '' : entry.error,
+      }
+    })
   }
 
   // 3. Control routes used by the browser half.
@@ -180,7 +287,7 @@ export function apply(ctx) {
         try {
           const items = await listAddresses()
           items.sort((a, b) => (a.private !== b.private) ? (a.private ? -1 : 1) : (a.ip < b.ip ? -1 : 1))
-          json(res, 200, { ok: true, items, port: PROXY_PORT })
+          json(res, 200, { ok: true, items, port: PROXY_PORT, upstream: upstreamAuthority(ctx) })
         } catch (err) {
           json(res, 200, { ok: false, items: [], port: PROXY_PORT, error: String(err && err.message ? err.message : err) })
         }
@@ -203,11 +310,15 @@ export function apply(ctx) {
         const enabled = !!(parsed && parsed.enabled)
         if (typeof ip !== 'string' || ip.length === 0) return json(res, 400, { ok: false, error: 'missing ip' })
         try {
-          if (enabled) await startProxy(ip)
-          else stopProxy(ip)
-          return json(res, 200, { ok: true, ip, enabled })
+          if (enabled) {
+            const result = await startProxy(ip)
+            if (!result.ok) return json(res, 200, { ok: false, ip, enabled: false, error: result.error })
+          } else {
+            stopProxy(ip)
+          }
+          return json(res, 200, { ok: true, ip, enabled: isRunning(ip), upstream: upstreamAuthority(ctx) })
         } catch (err) {
-          return json(res, 200, { ok: false, ip, error: String(err && err.message ? err.message : err) })
+          return json(res, 200, { ok: false, ip, enabled: false, error: String(err && err.message ? err.message : err) })
         }
       },
     }), 'lan-access: /lan/set route')

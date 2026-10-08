@@ -36,6 +36,9 @@ const TOKEN = process.env.LAN_PROXY_TOKEN || '';
 // 代理向上游换取到的会话 cookie（name=value）。一旦持有，所有转发都自动带上它，
 // 使得 3082 的访问者无需再手动携带 token。
 let sessionCookie = '';
+// 认证握手退避：失败后按 AUTH_RETRY_MS 重试；cookie 每 AUTH_REFRESH_MS 刷新一次。
+const AUTH_RETRY_MS = 3000;
+const AUTH_REFRESH_MS = 12 * 60 * 60 * 1000;
 
 // Headers that must not be forwarded verbatim; host is set explicitly below.
 const HOP_BY_HOP = new Set([
@@ -191,16 +194,42 @@ function listen() {
 }
 
 async function start() {
-  if (TOKEN) {
-    const ok = await authenticateUpstream();
-    if (!ok) {
-      console.error('[dsh-lan-access] upstream auth failed — retrying in 3s');
-      setTimeout(start, 3000);
-      return;
-    }
-    console.log('[dsh-lan-access] upstream session established');
-  }
+  // Bind FIRST, unconditionally. The upstream handshake is best-effort and may
+  // fail while the host is still starting (or if the token is stale); blocking
+  // `listen()` on it left the process alive with the phone's port dead, which
+  // is exactly how remote access "started" but never worked.
   listen();
+  if (TOKEN) {
+    maintainSession().catch((err) => {
+      console.error('[dsh-lan-access] upstream handshake gave up: ' +
+        (err && err.message ? err.message : err));
+    });
+  }
+}
+
+/**
+ * Keep trying for an upstream session cookie, then refresh well before any
+ * cookie lifetime expires. The delay starts short because the usual failure is
+ * "the host is still coming up"; the host half respawns this proxy when it
+ * restarts, so a rotated launch token always arrives through a fresh process.
+ */
+async function maintainSession() {
+  let delay = 1000;
+  for (;;) {
+    if (await authenticateUpstream()) {
+      console.log('[dsh-lan-access] upstream session established');
+      break;
+    }
+    console.error('[dsh-lan-access] upstream auth failed — retrying in ' + Math.round(delay / 1000) + 's');
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay = AUTH_RETRY_MS;
+  }
+  const refresh = setInterval(() => {
+    authenticateUpstream().then((ok) => {
+      if (!ok) console.error('[dsh-lan-access] upstream session refresh failed');
+    }, () => {});
+  }, AUTH_REFRESH_MS);
+  refresh.unref();
 }
 
 start();

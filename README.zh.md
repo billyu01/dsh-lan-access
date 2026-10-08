@@ -23,6 +23,8 @@ DeepSeek Harness 的 Web 界面默认只接受来自 `localhost` 的 `/api` 请�
 3. 打开你想要的地址对应的开关（例如 Tailscale 的 `100.x` 地址，或 Wi-Fi 的 `192.168.x.x`）。
 4. 在手机上打开 `http://<该地址>:3082/`。
 
+开关在两种运行形态下都可用：`dsh web`（默认 `3080`，`--port` 可改）和 **桌面客户端**（其 Web 服务固定跑 `19387`）。代理会读取运行中 host 的真实端口，无需手工配置。代理同时自行完成启动令牌握手并注入会话 cookie，所以手机上的地址不需要再带 `?token=`。
+
 不需要远程访问时，记得关闭开关。
 
 ## Android 应用
@@ -53,9 +55,10 @@ APK 未上架应用商店，需要侧载安装：
 
 ```
 手机 ── http://<ip>:3082/ ──> 反向代理 (src/proxy-server.cjs)
-                                   │ 重写 Host/Origin → 127.0.0.1:3080
+                                   │ 重写 Host/Origin → 127.0.0.1:<真实端口>
                                    ▼
-                              DSH Web 服务器 (:3080)
+                              DSH Web 服务器 (:3080，或 --port 指定；
+                                              桌面客户端固定 19387)
                                    │ /api 栅栏看到 loopback → 放行
                                    ▼
                               DeepSeek Harness
@@ -63,8 +66,17 @@ APK 未上架应用商店，需要侧载安装：
 
 控制链路：
 
-- **Host 半部**（`src/index.js`）向 `index.html` 注入 polyfill，暴露两个 JSON 路由（`GET /lan/info`、`POST /lan/set`），并为每个已开启的地址管理一个 `node` 子进程。
+- **Host 半部**（`src/index.js`）向 `index.html` 注入 polyfill，暴露两个 JSON 路由（`GET /lan/info`、`POST /lan/set`），并为每个已开启的地址管理一个 `node` 子进程。上游地址取自运行中的 `webServer` 服务，因此 `dsh web --port <n>` 与桌面客户端（Web 服务跑在 `19387`）都能正常工作；旧代码写死 `3080` 时，代理会永远卡在握手重试、从不监听。
+- Host 半部只有在观察到代理真的开始监听后才把开关标记为**已开启**；起不来的代理会被终止，设置页会显示失败原因，而不是留下"已开启"的假象。
 - **浏览器半部**（`src/client.js`）渲染设置页，通过这两个路由与 Host 半部通信。
+
+## 测试
+
+```bash
+npm test        # node:test：代理契约 + Host 半部契约，不需要网络
+```
+
+测试会拉起真实的 `src/proxy-server.cjs` 对着假上游跑，并用桩 `ctx` 驱动 Host 半部，其中包含"上游握手暂时失败时也必须先监听"这条回归用例。
 
 ## 目录结构
 
@@ -76,6 +88,9 @@ dsh-lan-access/
 │   ├── index.js          # Host 半部（ESM cordis 插件）
 │   ├── client.js         # 浏览器半部（设置页 UI）
 │   └── proxy-server.cjs  # 每地址反向代理（子进程）
+├── lib/
+│   └── client.js         # 浏览器半部：下发给客户端的镜像 bundle
+├── test/                 # node:test 契约测试（不发布）
 ├── scripts/
 │   └── release.sh        # npm 发布辅助脚本
 ├── README.md / README.zh.md

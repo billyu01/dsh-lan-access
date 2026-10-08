@@ -43,6 +43,7 @@
     "@deepseek-ai/cordis": "^4.0.1"
   },
   "scripts": {
+    "test": "node --test test/*.test.mjs",
     "release": "bash scripts/release.sh"
   }
 }

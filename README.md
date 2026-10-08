@@ -42,6 +42,13 @@ This plugin fixes both, inside a "Mobile Access" settings page:
    address or the Wi-Fi `192.168.x.x`).
 4. On your phone, open `http://<that-address>:3082/`.
 
+The switch works in both surfaces: `dsh web` (default port 3080, or whatever
+`--port` selects) and the DeepSeek Harness **Desktop client**, whose web server
+runs on `19387`. The proxy picks up whichever port the running host actually
+listens on, so no configuration is needed. The proxy also performs the launch
+token exchange itself and injects the resulting session cookie, so the phone
+URL needs no `?token=`.
+
 Keep switches off when you don't need remote access.
 
 ## Android app
@@ -80,9 +87,10 @@ The APK is not on an app store — sideload it:
 
 ```
 phone ── http://<ip>:3082/ ──> proxy (src/proxy-server.cjs)
-                                   │ rewrites Host/Origin → 127.0.0.1:3080
+                                   │ rewrites Host/Origin → 127.0.0.1:<live port>
                                    ▼
-                              DSH web server (:3080)
+                              DSH web server (:3080, or any --port;
+                                             the Desktop client pins 19387)
                                    │ /api fence sees loopback → accept
                                    ▼
                               DeepSeek Harness
@@ -92,9 +100,25 @@ The control flow:
 
 - **Host half** (`src/index.js`) injects the polyfill into `index.html`,
   exposes two JSON routes (`GET /lan/info`, `POST /lan/set`), and manages one
-  `node` subprocess per enabled address.
+  `node` subprocess per enabled address. It reads the upstream authority from
+  the live `webServer` service, so `dsh web --port <n>` and the Desktop client
+  (which runs its web server on `19387`) both work; the old hardcoded `3080`
+  left the proxy retrying its handshake forever without ever binding.
+- The host half only reports a switch as **on** after it observes the proxy
+  accepting connections; a proxy that never binds is terminated and the
+  settings row shows the reason instead of a phantom "on" state.
 - **Browser half** (`src/client.js`) renders the settings section and talks to
   the host half through those two routes.
+
+## Tests
+
+```sh
+npm test        # node:test — proxy contract + host-half contract, no network needed
+```
+
+The suite drives the real `src/proxy-server.cjs` against a fake upstream and
+the host half against a stubbed `ctx`, including the regression where the
+proxy must bind even while its upstream handshake cannot succeed yet.
 
 ## Repository layout
 
@@ -106,6 +130,9 @@ dsh-lan-access/
 │   ├── index.js          # Host half (ESM cordis plugin)
 │   ├── client.js         # Browser half (settings UI)
 │   └── proxy-server.cjs  # per-address reverse proxy (spawned child)
+├── lib/
+│   └── client.js         # Browser half, hand-mirrored bundle served to clients
+├── test/                 # node:test contract tests (not published)
 ├── scripts/
 │   └── release.sh        # npm publish helper
 ├── README.md / README.zh.md
